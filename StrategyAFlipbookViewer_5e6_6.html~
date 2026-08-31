@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Strategy A allocation - spend sweep</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; background: #fafafa; color: #222; }
+  h1   { font-size: 18px; margin: 0 0 4px 0; }
+  .sub { color: #666; font-size: 13px; margin-bottom: 14px; }
+  #frame { width: min(900px, 96vw); }
+  #chart { width: 100%; border: 1px solid #ddd; background: #fff; display: block; }
+  #controls { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  #slider { flex: 1; }
+  #spendLabel { font-size: 20px; font-weight: 600; min-width: 150px; text-align: right;
+                font-variant-numeric: tabular-nums; }
+  button { font-size: 14px; padding: 4px 12px; cursor: pointer; }
+  #hint { color: #888; font-size: 12px; margin-top: 8px; }
+  #missing { color: #b00020; font-size: 13px; margin-top: 6px; display: none; }
+</style>
+</head>
+<body>
+
+<h1>Strategy A optimal allocation vs ruin limit</h1>
+<div class="sub">Liquid Wealth $4,500,000 &mdash; drag the slider (or use &larr; &rarr; keys,
+mouse wheel over the chart) to sweep annual spending.</div>
+
+<div id="frame">
+  <img id="chart" alt="allocation chart">
+  <div id="controls">
+    <button id="playBtn" title="auto-sweep">&#9654;</button>
+    <input type="range" id="slider" min="0" step="1" value="0">
+    <div id="spendLabel"></div>
+  </div>
+  <div id="hint">Preloading images&hellip;</div>
+  <div id="missing"></div>
+</div>
+
+<script>
+"use strict";
+// ---- edit these five lines to point at a different run -------------
+const DIR       = "mc_png_260830_2";
+const PREFIX    = "strategy.a.fixed";
+const WEALTH    = "4500000";
+const SPEND_MIN = 100000, SPEND_MAX = 200000, SPEND_STEP = 2500;
+// --------------------------------------------------------------------
+
+const spends = [];
+for (let s = SPEND_MIN; s <= SPEND_MAX; s += SPEND_STEP) spends.push(s);
+const fileOf = s => `${DIR}/${PREFIX}.${WEALTH}.${s}.png`;
+
+const img = document.getElementById("chart");
+const slider = document.getElementById("slider");
+const label = document.getElementById("spendLabel");
+const hint = document.getElementById("hint");
+const missingBox = document.getElementById("missing");
+const playBtn = document.getElementById("playBtn");
+
+slider.max = spends.length - 1;
+
+// Preload everything so slider dragging is instant (no flicker).
+const cache = new Array(spends.length);
+const missing = [];
+let loaded = 0;
+spends.forEach((s, i) => {
+  const im = new Image();
+  im.onload = done; im.onerror = () => { missing.push(s); done(); };
+  im.src = fileOf(s);
+  cache[i] = im;
+});
+function done() {
+  loaded++;
+  if (loaded < spends.length) {
+    hint.textContent = `Preloading images\u2026 ${loaded}/${spends.length}`;
+    return;
+  }
+  hint.textContent =
+    "Tip: click the chart once, then hold an arrow key to animate.";
+  if (missing.length) {
+    missingBox.style.display = "block";
+    missingBox.textContent = "Missing files for spend: " +
+      missing.map(v => "$" + v.toLocaleString("en-US")).join(", ");
+  }
+}
+
+let idx = 0;
+function show(i) {
+  idx = Math.max(0, Math.min(spends.length - 1, i));
+  slider.value = idx;
+  img.src = cache[idx].src;
+  label.textContent = "$" + spends[idx].toLocaleString("en-US") + "/yr";
+}
+
+slider.addEventListener("input", () => show(+slider.value));
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight") { show(idx + 1); e.preventDefault(); }
+  if (e.key === "ArrowLeft")  { show(idx - 1); e.preventDefault(); }
+  if (e.key === "Home") { show(0); e.preventDefault(); }
+  if (e.key === "End")  { show(spends.length - 1); e.preventDefault(); }
+});
+img.addEventListener("wheel", e => {
+  e.preventDefault();
+  show(idx + (e.deltaY > 0 ? 1 : -1));
+}, { passive: false });
+
+// auto-sweep: bounces end-to-end until stopped
+let timer = null, dir = 1;
+playBtn.addEventListener("click", () => {
+  if (timer) { clearInterval(timer); timer = null; playBtn.innerHTML = "&#9654;"; return; }
+  playBtn.innerHTML = "&#9646;&#9646;";
+  timer = setInterval(() => {
+    if (idx + dir < 0 || idx + dir >= spends.length) dir = -dir;
+    show(idx + dir);
+  }, 250);
+});
+
+show(0);
+</script>
+</body>
+</html>
