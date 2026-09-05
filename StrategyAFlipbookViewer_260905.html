@@ -38,9 +38,9 @@ mouse wheel over the chart) to sweep annual spending.</div>
 <script>
 "use strict";
 // ---- edit these five lines to point at a different run -------------
-const DIR       = "mc_png_260830";
+const DIR       = "mc_png_260905";
 const PREFIX    = "strategy.a.fixed";
-const WEALTH    = "4500000";
+const WEALTH    = "5000000";
 const SPEND_MIN = 100000, SPEND_MAX = 200000, SPEND_STEP = 2500;
 // --------------------------------------------------------------------
 
@@ -65,7 +65,7 @@ spends.forEach((s, i) => {
   const im = new Image();
   im.onload = done; im.onerror = () => { missing.push(s); done(); };
   im.src = fileOf(s);
-  console.log('spend.foreEach of source = '+s+', file = '+img.src);
+  console.log('spend.foreEach of '+s);
   cache[i] = im;
 });
 function done() {

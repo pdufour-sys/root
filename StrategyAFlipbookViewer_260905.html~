@@ -65,7 +65,6 @@ spends.forEach((s, i) => {
   const im = new Image();
   im.onload = done; im.onerror = () => { missing.push(s); done(); };
   im.src = fileOf(s);
-  console.log('spend.foreEach of source = '+s+', file = '+img.src);
   cache[i] = im;
 });
 function done() {
