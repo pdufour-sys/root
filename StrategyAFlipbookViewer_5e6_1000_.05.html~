@@ -21,7 +21,7 @@
 <body>
 
 <h1>Strategy A optimal allocation vs ruin limit</h1>
-<div class="sub">Liquid Wealth $5,000,000 40 yrs, &mdash; drag the slider (or use &larr; &rarr; keys,
+<div class="sub">Liquid Wealth $4,500,000 &mdash; drag the slider (or use &larr; &rarr; keys,
 mouse wheel over the chart) to sweep annual spending.</div>
 
 <div id="frame">
