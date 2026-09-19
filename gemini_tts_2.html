@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini Audio Script Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen py-10 px-4">
+  <main class="max-w-3xl mx-auto bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-6 sm:p-8">
+    
+    <!-- Header -->
+    <header class="mb-6 pb-6 border-b border-slate-700">
+      <div class="flex items-center gap-3">
+        <div class="p-3 bg-indigo-600 rounded-xl text-white">
+          <i class="fa-solid fa-microphone-lines text-2xl"></i>
+        </div>
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight">Gemini Speech Studio</h1>
+          <p class="text-sm text-slate-400">Generate, inspect, play, and download speech from Gemini models</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- API Key Input -->
+    <section class="mb-5">
+      <label for="apiKey" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+        Gemini API Key
+      </label>
+      <div class="relative">
+        <input
+          type="password"
+          id="apiKey"
+          placeholder="AIzaSy..."
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono pr-10"
+        />
+        <button
+          type="button"
+          id="toggleKeyVisibility"
+          class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-200"
+          title="Toggle Visibility"
+        >
+          <i class="fa-solid fa-eye" id="eyeIcon"></i>
+        </button>
+      </div>
+    </section>
+
+    <!-- Configuration Options -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+      <div>
+        <label for="modeSelect" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+          Mode
+        </label>
+        <select
+          id="modeSelect"
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="single">Single Speaker</option>
+          <option value="multi">Multi-Speaker (Dr. Anya & Liam)</option>
+        </select>
+      </div>
+
+      <div id="singleVoiceContainer">
+        <label for="voiceSelect" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+          Voice
+        </label>
+        <select
+          id="voiceSelect"
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="Kore">Kore</option>
+          <option value="Puck">Puck</option>
+          <option value="Zephyr">Zephyr</option>
+          <option value="Fenrir">Fenrir</option>
+          <option value="Aoede">Aoede</option>
+        </select>
+      </div>
+
+      <div id="multiVoiceContainer" class="hidden">
+        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+          Assigned Speakers
+        </label>
+        <div class="text-xs bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 flex justify-between items-center text-slate-300">
+          <span><strong>Dr. Anya:</strong> Kore</span>
+          <span class="text-slate-600">|</span>
+          <span><strong>Liam:</strong> Puck</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Script Textarea -->
+    <section class="mb-5">
+      <div class="flex justify-between items-center mb-1">
+        <label for="scriptInput" class="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Script / Dialogue
+        </label>
+        <button id="loadSampleBtn" type="button" class="text-xs text-indigo-400 hover:text-indigo-300 underline">
+          Load sample script
+        </button>
+      </div>
+      <textarea
+        id="scriptInput"
+        rows="6"
+        placeholder="Enter your script here..."
+        class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-sans"
+      ></textarea>
+    </section>
+
+    <!-- Action Button -->
+    <button
+      id="generateBtn"
+      type="button"
+      class="w-full mb-6 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-4 rounded-lg shadow transition disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <i class="fa-solid fa-wand-magic-sparkles"></i>
+      <span>Synthesize Audio</span>
+    </button>
+
+    <!-- Status Alert -->
+    <div id="statusAlert" class="hidden mb-6 p-3.5 rounded-lg text-sm flex items-start gap-2.5">
+      <i id="statusIcon" class="mt-0.5"></i>
+      <div id="statusMessage" class="flex-1"></div>
+    </div>
+
+    <!-- Output Player & Debug Box -->
+    <section id="resultSection" class="hidden bg-slate-950 border border-slate-700 rounded-xl p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
+          <i class="fa-solid fa-circle-check"></i> Ready
+        </h2>
+        <span id="detectedFormatBadge" class="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">
+          Format: Detecting...
+        </span>
+      </div>
+
+      <audio id="audioPlayer" controls class="w-full outline-none"></audio>
+
+      <!-- Technical Inspector -->
+      <div class="bg-slate-900 rounded-lg p-3 font-mono text-xs text-slate-300 border border-slate-800 space-y-1">
+        <div><strong class="text-slate-400">MIME Returned:</strong> <span id="debugMime">None</span></div>
+        <div><strong class="text-slate-400">Byte Size:</strong> <span id="debugSize">0 bytes</span></div>
+        <div><strong class="text-slate-400">Magic Bytes (Hex):</strong> <span id="debugHex">None</span></div>
+      </div>
+
+      <div>
+        <a
+          id="downloadBtn"
+          class="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2 px-4 rounded-lg transition text-sm cursor-pointer"
+        >
+          <i class="fa-solid fa-download"></i>
+          <span id="downloadBtnText">Download Audio</span>
+        </a>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const apiKeyInput = document.getElementById("apiKey");
+    const toggleKeyVisibilityBtn = document.getElementById("toggleKeyVisibility");
+    const eyeIcon = document.getElementById("eyeIcon");
+    const modeSelect = document.getElementById("modeSelect");
+    const singleVoiceContainer = document.getElementById("singleVoiceContainer");
+    const multiVoiceContainer = document.getElementById("multiVoiceContainer");
+    const voiceSelect = document.getElementById("voiceSelect");
+    const scriptInput = document.getElementById("scriptInput");
+    const generateBtn = document.getElementById("generateBtn");
+    const loadSampleBtn = document.getElementById("loadSampleBtn");
+    const statusAlert = document.getElementById("statusAlert");
+    const statusIcon = document.getElementById("statusIcon");
+    const statusMessage = document.getElementById("statusMessage");
+    const resultSection = document.getElementById("resultSection");
+    const audioPlayer = document.getElementById("audioPlayer");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const downloadBtnText = document.getElementById("downloadBtnText");
+    const detectedFormatBadge = document.getElementById("detectedFormatBadge");
+    const debugMime = document.getElementById("debugMime");
+    const debugSize = document.getElementById("debugSize");
+    const debugHex = document.getElementById("debugHex");
+
+    let currentAudioBlobUrl = null;
+
+    const savedKey = localStorage.getItem("GEMINI_API_KEY");
+    if (savedKey) apiKeyInput.value = savedKey;
+
+    toggleKeyVisibilityBtn.addEventListener("click", () => {
+      const isPass = apiKeyInput.type === "password";
+      apiKeyInput.type = isPass ? "text" : "password";
+      eyeIcon.className = isPass ? "fa-solid fa-eye-slash" : "fa-solid fa-eye";
+    });
+
+    modeSelect.addEventListener("change", () => {
+      const isSingle = modeSelect.value === "single";
+      singleVoiceContainer.classList.toggle("hidden", !isSingle);
+      multiVoiceContainer.classList.toggle("hidden", isSingle);
+    });
+
+    loadSampleBtn.addEventListener("click", () => {
+      if (modeSelect.value === "single") {
+        scriptInput.value = "[excitedly] Welcome to our exploration of modern generative speech synthesis! Let's verify that this audio file renders cleanly.";
+      } else {
+        scriptInput.value = `Dr. Anya: [excitedly] Liam, you won't believe what we found under the mossy log today! A pristine specimen of an arboreal salamander!
+Liam: [laughing] In this dry heat? Are you sure it wasn't just a garden gecko playing tricks on you?
+Dr. Anya: [indignantly] I know my salamanders, Liam!`;
+      }
+    });
+
+    // Detect browser decoding errors
+    audioPlayer.addEventListener("error", () => {
+      const err = audioPlayer.error;
+      const codeMap = { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" };
+      setStatus("error", `HTML5 Audio Error: ${codeMap[err.code] || "UNKNOWN"} - browser cannot decode this bitstream.`);
+    });
+
+    function setStatus(type, msg) {
+      statusAlert.classList.remove("hidden", "bg-red-900/30", "border-red-600", "text-red-200", "bg-blue-900/30", "border-blue-600", "text-blue-200");
+      statusAlert.classList.add("border");
+      if (type === "error") {
+        statusAlert.classList.add("bg-red-900/30", "border-red-600", "text-red-200");
+        statusIcon.className = "fa-solid fa-triangle-exclamation text-red-400 mt-0.5";
+      } else if (type === "loading") {
+        statusAlert.classList.add("bg-blue-900/30", "border-blue-600", "text-blue-200");
+        statusIcon.className = "fa-solid fa-spinner fa-spin text-blue-400 mt-0.5";
+      }
+      statusMessage.textContent = msg;
+    }
+
+    function clearStatus() {
+      statusAlert.classList.add("hidden");
+    }
+
+    // Build standard 44-byte RIFF WAV for genuine raw PCM bytes
+    function buildWavFromPcm(pcmBytes, sampleRate = 24000, numChannels = 1, bitDepth = 16) {
+      const byteRate = (sampleRate * numChannels * bitDepth) / 8;
+      const blockAlign = (numChannels * bitDepth) / 8;
+      const dataSize = pcmBytes.length;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      function writeStr(offset, str) {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      }
+
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bitDepth, true);
+      writeStr(36, 'data');
+      view.setUint32(40, dataSize, true);
+
+      new Uint8Array(buffer, 44).set(pcmBytes);
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    generateBtn.addEventListener("click", async () => {
+      const apiKey = apiKeyInput.value.trim();
+      const text = scriptInput.value.trim();
+      const mode = modeSelect.value;
+      const voice = voiceSelect.value;
+
+      if (!apiKey) return setStatus("error", "Please enter a Gemini API Key.");
+      if (!text) return setStatus("error", "Please enter a script.");
+
+      localStorage.setItem("GEMINI_API_KEY", apiKey);
+      generateBtn.disabled = true;
+      setStatus("loading", "Calling Gemini Speech API...");
+      resultSection.classList.add("hidden");
+
+      try {
+        let speechConfig = {};
+        if (mode === "single") {
+          speechConfig = { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } };
+        } else {
+          speechConfig = {
+            multiSpeakerVoiceConfig: {
+              speakerVoiceConfigs: [
+                { speaker: "Dr. Anya", voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
+                { speaker: "Liam", voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } }
+              ]
+            }
+          };
+        }
+
+        const payload = {
+          contents: [{ role: "user", parts: [{ text }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig
+          }
+        };
+
+        const model = "gemini-3.1-flash-tts-preview";
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        const part = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+
+        if (!part?.inlineData?.data) {
+          throw new Error("No audio inlineData was returned by the model.");
+        }
+
+        const rawMime = part.inlineData.mimeType || "";
+        const base64Str = part.inlineData.data;
+
+        // Decode Base64
+        const binaryStr = window.atob(base64Str);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+
+        // Extract first 4 bytes to identify magic headers
+        const b0 = bytes[0], b1 = bytes[1], b2 = bytes[2], b3 = bytes[3];
+        const hexDump = Array.from(bytes.slice(0, 8))
+          .map(b => "0x" + b.toString(16).padStart(2, '0').toUpperCase())
+          .join(" ");
+
+        debugMime.textContent = rawMime || "(unspecified by API)";
+        debugSize.textContent = `${bytes.length.toLocaleString()} bytes`;
+        debugHex.textContent = hexDump;
+
+        let finalBlob;
+        let fileExt = "wav";
+
+        // Magic Byte Sniffing
+        const isWavHeader = (b0 === 0x52 && b1 === 0x49 && b2 === 0x46 && b3 === 0x46); // 'RIFF'
+        const isMp3Header = (b0 === 0x49 && b1 === 0x44 && b2 === 0x33) || (b0 === 0xFF && (b1 & 0xE0) === 0xE0); // 'ID3' or MPEG sync
+        const isOggHeader = (b0 === 0x4F && b1 === 0x67 && b2 === 0x67 && b3 === 0x53); // 'OggS'
+
+        if (isWavHeader) {
+          // Already a complete WAV container - do NOT wrap again
+          detectedFormatBadge.textContent = "Format: Complete WAV (Direct)";
+          finalBlob = new Blob([bytes], { type: "audio/wav" });
+          fileExt = "wav";
+        } else if (isMp3Header) {
+          // Native MP3 stream
+          detectedFormatBadge.textContent = "Format: MP3 Stream";
+          finalBlob = new Blob([bytes], { type: "audio/mpeg" });
+          fileExt = "mp3";
+        } else if (isOggHeader) {
+          // Native Ogg stream
+          detectedFormatBadge.textContent = "Format: Ogg Container";
+          finalBlob = new Blob([bytes], { type: "audio/ogg" });
+          fileExt = "ogg";
+        } else {
+          // Genuine raw linear PCM: wrap with 44-byte WAV header
+          detectedFormatBadge.textContent = "Format: Raw PCM (Packaged to WAV)";
+          let rate = 24000;
+          const match = rawMime.match(/rate=(\d+)/i);
+          if (match) rate = parseInt(match[1], 10);
+          finalBlob = buildWavFromPcm(bytes, rate, 1, 16);
+          fileExt = "wav";
+        }
+
+        if (currentAudioBlobUrl) URL.revokeObjectURL(currentAudioBlobUrl);
+        currentAudioBlobUrl = URL.createObjectURL(finalBlob);
+
+        audioPlayer.src = currentAudioBlobUrl;
+        audioPlayer.load();
+
+        downloadBtn.href = currentAudioBlobUrl;
+        downloadBtn.download = `gemini_tts_${Date.now()}.${fileExt}`;
+        downloadBtnText.textContent = `Download Audio (.${fileExt.toUpperCase()})`;
+
+        clearStatus();
+        resultSection.classList.remove("hidden");
+
+      } catch (err) {
+        console.error(err);
+        setStatus("error", err.message);
+      } finally {
+        generateBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
