@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini Image Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen py-6 sm:py-10 px-4">
+  <main class="max-w-3xl mx-auto bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-5 sm:p-8">
+
+    <!-- Header -->
+    <header class="mb-6 pb-6 border-b border-slate-700">
+      <div class="flex items-center gap-3">
+        <div class="p-3 bg-fuchsia-600 rounded-xl text-white">
+          <i class="fa-solid fa-wand-magic-sparkles text-2xl"></i>
+        </div>
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight">Gemini Image Studio</h1>
+          <p class="text-sm text-slate-400">
+            Generate images from text, or edit images you supply
+          </p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Mode indicator: derived from whether images are attached -->
+    <div id="modeBanner"
+         class="mb-5 px-3.5 py-2.5 rounded-lg text-sm border border-slate-700 bg-slate-950 flex items-center gap-2.5">
+      <i id="modeIcon" class="fa-solid fa-font text-fuchsia-400"></i>
+      <span id="modeText">Text to image &mdash; add an image below to switch to editing.</span>
+    </div>
+
+    <!-- Reference images -->
+    <section class="mb-5">
+      <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+        Reference images <span class="text-slate-500 normal-case font-normal">(optional, up to 4)</span>
+      </label>
+
+      <div class="flex flex-wrap gap-2 mb-3">
+        <button id="addFilesBtn" type="button"
+          class="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-sm font-medium py-2 px-3.5 rounded-lg transition">
+          <i class="fa-solid fa-image"></i> Add images
+        </button>
+        <button id="takePhotoBtn" type="button"
+          class="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-sm font-medium py-2 px-3.5 rounded-lg transition">
+          <i class="fa-solid fa-camera"></i> Take photo
+        </button>
+        <button id="clearImagesBtn" type="button"
+          class="hidden inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-sm font-medium py-2 px-3.5 rounded-lg transition">
+          <i class="fa-solid fa-xmark"></i> Clear all
+        </button>
+      </div>
+
+      <!-- Two inputs: the second asks the OS for the camera on a phone. -->
+      <input id="fileInput" type="file" accept="image/*" multiple class="hidden" />
+      <input id="cameraInput" type="file" accept="image/*" capture="environment" class="hidden" />
+
+      <div id="thumbStrip" class="hidden grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+      <p id="thumbHint" class="text-xs text-slate-500 mt-2 hidden">
+        Large photos are resized in your browser before upload, so they travel quickly.
+      </p>
+    </section>
+
+    <!-- Prompt -->
+    <section class="mb-5">
+      <div class="flex justify-between items-center mb-1">
+        <label for="promptInput" class="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Prompt
+        </label>
+        <button id="loadSampleBtn" type="button" class="text-xs text-fuchsia-400 hover:text-fuchsia-300 underline">
+          Load sample prompt
+        </button>
+      </div>
+      <textarea
+        id="promptInput"
+        rows="4"
+        placeholder="Describe the image you want, or how to change the images above..."
+        class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500 font-sans"
+      ></textarea>
+      <div class="text-right text-xs text-slate-500 mt-1">
+        <span id="promptCount">0</span> / 4000
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+      <div>
+        <label for="modelSelect" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Model</label>
+        <select id="modelSelect"
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500">
+          <option value="gemini-3-pro-image">Pro (best)</option>
+          <option value="gemini-3.1-flash-image">Flash (fast)</option>
+          <option value="gemini-3.1-flash-lite-image">Flash Lite</option>
+        </select>
+      </div>
+      <div>
+        <label for="sizeSelect" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Size</label>
+        <select id="sizeSelect"
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500">
+          <option value="512px">512px</option>
+          <option value="1K">1K</option>
+          <option value="2K" selected>2K</option>
+          <option value="4K">4K</option>
+        </select>
+      </div>
+      <div>
+        <label for="ratioSelect" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Aspect</label>
+        <select id="ratioSelect"
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500">
+          <option value="">Auto</option>
+          <option value="1:1">1:1</option>
+          <option value="3:2">3:2</option>
+          <option value="2:3">2:3</option>
+          <option value="4:3">4:3</option>
+          <option value="3:4">3:4</option>
+          <option value="4:5">4:5</option>
+          <option value="5:4">5:4</option>
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16</option>
+          <option value="21:9">21:9</option>
+        </select>
+      </div>
+      <div>
+        <label for="formatSelect" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Format</label>
+        <select id="formatSelect"
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500">
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/png">PNG</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- Access code: only needed if you set ACCESS_CODE on the function -->
+    <section id="codeSection" class="mb-5 hidden">
+      <label for="codeInput" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+        Access code
+      </label>
+      <input id="codeInput" type="password" autocomplete="off"
+        class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500" />
+    </section>
+    <button id="toggleCodeBtn" type="button"
+      class="text-xs text-slate-500 hover:text-slate-300 underline mb-5 block">
+      Endpoint needs an access code?
+    </button>
+
+    <!-- Action -->
+    <button
+      id="generateBtn"
+      type="button"
+      class="w-full mb-6 flex items-center justify-center gap-2 bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-medium py-3 px-4 rounded-lg shadow transition disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <i id="generateIcon" class="fa-solid fa-wand-magic-sparkles"></i>
+      <span id="generateLabel">Generate Image</span>
+    </button>
+
+    <!-- Status -->
+    <div id="statusAlert" class="hidden mb-6 p-3.5 rounded-lg text-sm flex items-start gap-2.5">
+      <i id="statusIcon" class="mt-0.5"></i>
+      <div id="statusMessage" class="flex-1"></div>
+    </div>
+
+    <!-- Result -->
+    <section id="resultSection" class="hidden bg-slate-950 border border-slate-700 rounded-xl p-4 sm:p-5 space-y-4">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
+          <i class="fa-solid fa-circle-check"></i> Ready
+        </h2>
+        <span id="resultBadge" class="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">
+          &mdash;
+        </span>
+      </div>
+
+      <img id="resultImage" alt="Generated image"
+           class="w-full rounded-lg border border-slate-800 bg-slate-900" />
+
+      <div id="modelNote" class="hidden text-xs text-slate-400 italic border-l-2 border-slate-700 pl-3"></div>
+
+      <div class="bg-slate-900 rounded-lg p-3 font-mono text-xs text-slate-300 border border-slate-800 space-y-1">
+        <div><strong class="text-slate-400">Model:</strong> <span id="debugModel">&mdash;</span></div>
+        <div><strong class="text-slate-400">Type:</strong> <span id="debugMime">&mdash;</span></div>
+        <div><strong class="text-slate-400">Size:</strong> <span id="debugSize">&mdash;</span></div>
+        <div><strong class="text-slate-400">Dimensions:</strong> <span id="debugDims">&mdash;</span></div>
+        <div><strong class="text-slate-400">Elapsed:</strong> <span id="debugElapsed">&mdash;</span></div>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <a id="downloadBtn"
+          class="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2 px-4 rounded-lg transition text-sm cursor-pointer">
+          <i class="fa-solid fa-download"></i>
+          <span id="downloadBtnText">Download</span>
+        </a>
+        <button id="shareBtn" type="button"
+          class="hidden inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-500 text-white font-medium py-2 px-4 rounded-lg transition text-sm">
+          <i class="fa-solid fa-share-nodes"></i> Share / Save to Photos
+        </button>
+        <button id="useAsInputBtn" type="button"
+          class="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white font-medium py-2 px-4 rounded-lg transition text-sm">
+          <i class="fa-solid fa-rotate-left"></i> Use as input
+        </button>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // =========================================================================
+    // Your deployed image Cloud Function's trigger URL.  There is NO API key
+    // in this file -- the key lives only inside the function's private
+    // environment, so this page is safe to publish on GitHub Pages.
+    //
+    // Format: https://REGION-PROJECT_ID.cloudfunctions.net/FUNCTION_NAME
+    // =========================================================================
+    const IMAGE_ENDPOINT = "https://us-central1-seismic-ground-500702-e6.cloudfunctions.net/gemini-image";
+
+    // Longest edge, in pixels, that an uploaded photo is resized to before it
+    // is sent. A 12 MP phone photo (~4000px, several MB) becomes a few hundred
+    // KB at 1568px, which is plenty of detail for the model to work from and
+    // keeps the request small and quick.
+    const MAX_UPLOAD_EDGE = 1568;
+    const UPLOAD_JPEG_QUALITY = 0.85;
+    const MAX_IMAGES = 4;
+
+    const $ = (id) => document.getElementById(id);
+
+    const modeBanner = $("modeBanner"), modeIcon = $("modeIcon"), modeText = $("modeText");
+    const addFilesBtn = $("addFilesBtn"), takePhotoBtn = $("takePhotoBtn"), clearImagesBtn = $("clearImagesBtn");
+    const fileInput = $("fileInput"), cameraInput = $("cameraInput");
+    const thumbStrip = $("thumbStrip"), thumbHint = $("thumbHint");
+    const promptInput = $("promptInput"), promptCount = $("promptCount"), loadSampleBtn = $("loadSampleBtn");
+    const modelSelect = $("modelSelect"), sizeSelect = $("sizeSelect");
+    const ratioSelect = $("ratioSelect"), formatSelect = $("formatSelect");
+    const codeSection = $("codeSection"), codeInput = $("codeInput"), toggleCodeBtn = $("toggleCodeBtn");
+    const generateBtn = $("generateBtn"), generateIcon = $("generateIcon"), generateLabel = $("generateLabel");
+    const statusAlert = $("statusAlert"), statusIcon = $("statusIcon"), statusMessage = $("statusMessage");
+    const resultSection = $("resultSection"), resultImage = $("resultImage"), resultBadge = $("resultBadge");
+    const modelNote = $("modelNote");
+    const debugModel = $("debugModel"), debugMime = $("debugMime"), debugSize = $("debugSize");
+    const debugDims = $("debugDims"), debugElapsed = $("debugElapsed");
+    const downloadBtn = $("downloadBtn"), downloadBtnText = $("downloadBtnText");
+    const shareBtn = $("shareBtn"), useAsInputBtn = $("useAsInputBtn");
+
+    // Each entry: { data: base64 (no prefix), mime_type, preview: dataURL, name }
+    let inputImages = [];
+    let currentBlob = null;
+    let currentBlobUrl = null;
+    let elapsedTimer = null;
+
+    // ---------------------------------------------------------------------
+    // Settings persistence. Wrapped in try/catch because storage can be
+    // blocked or unavailable (private windows, strict settings).
+    // ---------------------------------------------------------------------
+    function saveSettings() {
+      try {
+        localStorage.setItem("geminiImageSettings", JSON.stringify({
+          model: modelSelect.value,
+          size: sizeSelect.value,
+          ratio: ratioSelect.value,
+          format: formatSelect.value
+        }));
+      } catch (e) { /* not important enough to interrupt anything */ }
+    }
+
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem("geminiImageSettings");
+        if (!raw) return;
+        const s = JSON.parse(raw);
+        if (s.model) modelSelect.value = s.model;
+        if (s.size) sizeSelect.value = s.size;
+        if (typeof s.ratio === "string") ratioSelect.value = s.ratio;
+        if (s.format) formatSelect.value = s.format;
+      } catch (e) { /* fall back to the markup defaults */ }
+    }
+    loadSettings();
+    [modelSelect, sizeSelect, ratioSelect, formatSelect].forEach(
+      el => el.addEventListener("change", saveSettings)
+    );
+
+    // ---------------------------------------------------------------------
+    // Status helpers
+    // ---------------------------------------------------------------------
+    function setStatus(type, msg) {
+      statusAlert.classList.remove("hidden",
+        "bg-red-900/30", "border-red-600", "text-red-200",
+        "bg-blue-900/30", "border-blue-600", "text-blue-200");
+      statusAlert.classList.add("border");
+      if (type === "error") {
+        statusAlert.classList.add("bg-red-900/30", "border-red-600", "text-red-200");
+        statusIcon.className = "fa-solid fa-triangle-exclamation text-red-400 mt-0.5";
+      } else {
+        statusAlert.classList.add("bg-blue-900/30", "border-blue-600", "text-blue-200");
+        statusIcon.className = "fa-solid fa-spinner fa-spin text-blue-400 mt-0.5";
+      }
+      statusMessage.textContent = msg;
+    }
+
+    function clearStatus() {
+      statusAlert.classList.add("hidden");
+    }
+
+    // ---------------------------------------------------------------------
+    // Image intake: downscale in the browser, then keep base64 for upload.
+    // ---------------------------------------------------------------------
+
+    // createImageBitmap with imageOrientation:'from-image' honours the EXIF
+    // rotation phones write, so a portrait photo doesn't arrive sideways.
+    // Older browsers fall back to an <img>, which applies EXIF itself.
+    async function decodeImage(file) {
+      if (typeof createImageBitmap === "function") {
+        try {
+          return await createImageBitmap(file, { imageOrientation: "from-image" });
+        } catch (e) { /* fall through */ }
+      }
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read that image.")); };
+        img.src = url;
+      });
+    }
+
+    async function fileToDownscaledBase64(file) {
+      const bitmap = await decodeImage(file);
+      const w = bitmap.width, h = bitmap.height;
+      const scale = Math.min(1, MAX_UPLOAD_EDGE / Math.max(w, h));
+      const outW = Math.max(1, Math.round(w * scale));
+      const outH = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = outW;
+      canvas.height = outH;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0, outW, outH);
+      if (bitmap.close) bitmap.close();
+
+      // JPEG keeps the upload small; PNG here would balloon photo uploads.
+      const dataUrl = canvas.toDataURL("image/jpeg", UPLOAD_JPEG_QUALITY);
+      return {
+        data: dataUrl.split(",")[1],
+        mime_type: "image/jpeg",
+        preview: dataUrl,
+        name: file.name || "photo.jpg",
+        dims: `${outW}x${outH}`
+      };
+    }
+
+    async function handleFiles(fileList) {
+      const files = Array.from(fileList || []).filter(f => f.type.startsWith("image/"));
+      if (!files.length) return;
+
+      const room = MAX_IMAGES - inputImages.length;
+      if (room <= 0) {
+        setStatus("error", `You can attach at most ${MAX_IMAGES} images.`);
+        return;
+      }
+
+      setStatus("loading", "Preparing image…");
+      try {
+        for (const file of files.slice(0, room)) {
+          inputImages.push(await fileToDownscaledBase64(file));
+        }
+        clearStatus();
+      } catch (err) {
+        setStatus("error", err.message || "Could not read that image.");
+      }
+      renderThumbs();
+    }
+
+    function renderThumbs() {
+      thumbStrip.innerHTML = "";
+      const has = inputImages.length > 0;
+      thumbStrip.classList.toggle("hidden", !has);
+      thumbHint.classList.toggle("hidden", !has);
+      clearImagesBtn.classList.toggle("hidden", !has);
+
+      inputImages.forEach((img, i) => {
+        const wrap = document.createElement("div");
+        wrap.className = "relative group";
+        wrap.innerHTML = `
+          <img src="${img.preview}" alt="Reference ${i + 1}"
+               class="w-full h-24 object-cover rounded-lg border border-slate-700" />
+          <button type="button" data-idx="${i}"
+            class="thumb-remove absolute top-1 right-1 bg-slate-900/85 hover:bg-red-600 text-white
+                   w-6 h-6 rounded-full text-xs flex items-center justify-center transition"
+            aria-label="Remove image ${i + 1}">&times;</button>
+          <span class="absolute bottom-1 left-1 text-[10px] bg-slate-900/85 px-1.5 py-0.5 rounded">${img.dims}</span>
+        `;
+        thumbStrip.appendChild(wrap);
+      });
+
+      thumbStrip.querySelectorAll(".thumb-remove").forEach(btn => {
+        btn.addEventListener("click", () => {
+          inputImages.splice(parseInt(btn.dataset.idx, 10), 1);
+          renderThumbs();
+        });
+      });
+
+      updateMode();
+    }
+
+    function updateMode() {
+      const n = inputImages.length;
+      if (n === 0) {
+        modeIcon.className = "fa-solid fa-font text-fuchsia-400";
+        modeText.textContent = "Text to image — add an image below to switch to editing.";
+      } else {
+        modeIcon.className = "fa-solid fa-images text-sky-400";
+        modeText.textContent = n === 1
+          ? "Image + text to image — your prompt describes how to change the photo."
+          : `${n} images + text — your prompt describes how to combine or change them.`;
+      }
+    }
+
+    addFilesBtn.addEventListener("click", () => fileInput.click());
+    takePhotoBtn.addEventListener("click", () => cameraInput.click());
+    fileInput.addEventListener("change", e => { handleFiles(e.target.files); e.target.value = ""; });
+    cameraInput.addEventListener("change", e => { handleFiles(e.target.files); e.target.value = ""; });
+    clearImagesBtn.addEventListener("click", () => { inputImages = []; renderThumbs(); });
+
+    // Paste an image straight from the clipboard.
+    document.addEventListener("paste", e => {
+      const items = Array.from(e.clipboardData?.items || []);
+      const files = items.filter(i => i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
+      if (files.length) handleFiles(files);
+    });
+
+    // ---------------------------------------------------------------------
+    // Prompt helpers
+    // ---------------------------------------------------------------------
+    promptInput.addEventListener("input", () => {
+      promptCount.textContent = promptInput.value.length;
+    });
+
+    loadSampleBtn.addEventListener("click", () => {
+      promptInput.value = inputImages.length
+        ? "Keep the subject exactly as-is, but relight the scene as late-afternoon golden hour with long soft shadows."
+        : "A cross-section diagram of a plant cell, clean vector style on a white background, each organelle clearly labelled in a small sans-serif font.";
+      promptInput.dispatchEvent(new Event("input"));
+    });
+
+    toggleCodeBtn.addEventListener("click", () => {
+      const hidden = codeSection.classList.toggle("hidden");
+      toggleCodeBtn.textContent = hidden ? "Endpoint needs an access code?" : "Hide access code";
+    });
+
+    // ---------------------------------------------------------------------
+    // Generate
+    // ---------------------------------------------------------------------
+    function startElapsed() {
+      const t0 = Date.now();
+      elapsedTimer = setInterval(() => {
+        const s = ((Date.now() - t0) / 1000).toFixed(0);
+        generateLabel.textContent = `Generating… ${s}s`;
+      }, 250);
+      return () => {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+        return ((Date.now() - t0) / 1000).toFixed(1);
+      };
+    }
+
+    function base64ToBlob(b64, mime) {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+
+    generateBtn.addEventListener("click", async () => {
+      const prompt = promptInput.value.trim();
+
+      if (IMAGE_ENDPOINT.includes("REGION-PROJECT_ID")) {
+        return setStatus("error", "IMAGE_ENDPOINT is not set yet. Paste your deployed Cloud Function URL into this page.");
+      }
+      if (!prompt) {
+        return setStatus("error", "Please enter a prompt.");
+      }
+
+      generateBtn.disabled = true;
+      generateIcon.className = "fa-solid fa-spinner fa-spin";
+      resultSection.classList.add("hidden");
+      setStatus("loading", inputImages.length
+        ? "Editing your image… this can take up to a minute."
+        : "Generating your image… this can take up to a minute.");
+      const stopElapsed = startElapsed();
+
+      try {
+        const payload = {
+          prompt,
+          images: inputImages.map(i => ({ data: i.data, mime_type: i.mime_type })),
+          model: modelSelect.value,
+          image_size: sizeSelect.value,
+          aspect_ratio: ratioSelect.value,
+          output_mime: formatSelect.value
+        };
+        if (!codeSection.classList.contains("hidden") && codeInput.value) {
+          payload.code = codeInput.value;
+        }
+
+        const res = await fetch(IMAGE_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          throw new Error(data?.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+        }
+        if (!data?.image) {
+          throw new Error("The service returned no image.");
+        }
+
+        const elapsed = stopElapsed();
+        const mime = data.image.mime_type || "image/png";
+        let displayUrl, byteLen = 0;
+
+        if (data.image.data) {
+          currentBlob = base64ToBlob(data.image.data, mime);
+          byteLen = currentBlob.size;
+          if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+          currentBlobUrl = URL.createObjectURL(currentBlob);
+          displayUrl = currentBlobUrl;
+        } else {
+          // Some responses hand back a URI instead of inline bytes.
+          currentBlob = null;
+          displayUrl = data.image.uri;
+        }
+
+        resultImage.onload = () => {
+          debugDims.textContent = `${resultImage.naturalWidth} x ${resultImage.naturalHeight}`;
+        };
+        resultImage.src = displayUrl;
+
+        const ext = mime === "image/png" ? "png" : "jpg";
+        downloadBtn.href = displayUrl;
+        downloadBtn.download = `gemini_image_${Date.now()}.${ext}`;
+        downloadBtnText.textContent = `Download .${ext.toUpperCase()}`;
+
+        debugModel.textContent = data.model || modelSelect.value;
+        debugMime.textContent = mime;
+        debugSize.textContent = byteLen ? `${byteLen.toLocaleString()} bytes` : "(served by URL)";
+        debugElapsed.textContent = `${elapsed}s`;
+        resultBadge.textContent = `${sizeSelect.value}${ratioSelect.value ? " · " + ratioSelect.value : ""}`;
+
+        if (data.text) {
+          modelNote.textContent = data.text;
+          modelNote.classList.remove("hidden");
+        } else {
+          modelNote.classList.add("hidden");
+        }
+
+        // Web Share with files is the reliable "Save to Photos" path on a
+        // phone. Only offer it when this browser can actually share the file.
+        const canShare = currentBlob && navigator.canShare &&
+          navigator.canShare({ files: [new File([currentBlob], `img.${ext}`, { type: mime })] });
+        shareBtn.classList.toggle("hidden", !canShare);
+
+        clearStatus();
+        resultSection.classList.remove("hidden");
+        resultSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+      } catch (err) {
+        if (elapsedTimer) stopElapsed();
+        console.error(err);
+        setStatus("error", err.message);
+      } finally {
+        generateBtn.disabled = false;
+        generateIcon.className = "fa-solid fa-wand-magic-sparkles";
+        generateLabel.textContent = "Generate Image";
+      }
+    });
+
+    // ---------------------------------------------------------------------
+    // Result actions
+    // ---------------------------------------------------------------------
+    shareBtn.addEventListener("click", async () => {
+      if (!currentBlob) return;
+      const ext = currentBlob.type === "image/png" ? "png" : "jpg";
+      const file = new File([currentBlob], `gemini_image_${Date.now()}.${ext}`, { type: currentBlob.type });
+      try {
+        await navigator.share({ files: [file], title: "Generated image" });
+      } catch (err) {
+        if (err.name !== "AbortError") setStatus("error", "Sharing was not possible: " + err.message);
+      }
+    });
+
+    // Feed the result back in as a reference, so you can refine step by step.
+    useAsInputBtn.addEventListener("click", async () => {
+      if (!currentBlob && !resultImage.src) return;
+      try {
+        const blob = currentBlob || await (await fetch(resultImage.src)).blob();
+        const file = new File([blob], "previous.jpg", { type: blob.type || "image/jpeg" });
+        if (inputImages.length >= MAX_IMAGES) inputImages.shift();
+        await handleFiles([file]);
+        promptInput.focus();
+      } catch (err) {
+        setStatus("error", "Could not reuse that image: " + err.message);
+      }
+    });
+
+    updateMode();
+  </script>
+</body>
+</html>
