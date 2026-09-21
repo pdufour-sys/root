@@ -24,7 +24,7 @@
     </header>
 
     <!-- Configuration Options -->
-    <section class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+    <section class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
       <div>
         <label for="modeSelect" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
           Mode
@@ -33,8 +33,9 @@
           id="modeSelect"
           class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
         >
+          <option value="auto" selected>Auto &mdash; detect from script</option>
           <option value="single">Single Speaker</option>
-          <option value="multi">Multi-Speaker (Dr. Anya &amp; Liam)</option>
+          <option value="multi">Multi-Speaker</option>
         </select>
       </div>
 
@@ -45,23 +46,32 @@
         <select
           id="voiceSelect"
           class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <option value="Kore">Kore</option>
-          <option value="Puck">Puck</option>
-          <option value="Zephyr">Zephyr</option>
-          <option value="Fenrir">Fenrir</option>
-          <option value="Aoede">Aoede</option>
-        </select>
+        ></select>
       </div>
 
-      <div id="multiVoiceContainer" class="hidden">
+      <div id="multiVoiceContainer" class="hidden sm:col-span-2">
         <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
           Assigned Speakers
         </label>
-        <div class="text-xs bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 flex justify-between items-center text-slate-300">
-          <span><strong>Dr. Anya:</strong> Kore</span>
-          <span class="text-slate-600">|</span>
-          <span><strong>Liam:</strong> Puck</span>
+        <div id="speakerRows" class="space-y-2"></div>
+      </div>
+    </section>
+
+    <!-- What auto-detect found. Shown only in Auto mode, so nothing about the
+         request is hidden from you before you spend a call on it. -->
+    <section id="detectPanel" class="hidden mb-5 rounded-lg border border-slate-700 bg-slate-950 p-3.5 text-sm">
+      <div class="flex items-start gap-2.5">
+        <i id="detectIcon" class="fa-solid fa-wand-sparkles text-indigo-400 mt-0.5"></i>
+        <div class="flex-1 min-w-0">
+          <div id="detectSummary" class="text-slate-200"></div>
+          <ul id="detectNotes" class="mt-1.5 space-y-0.5 text-xs text-slate-400"></ul>
+          <button id="togglePreviewBtn" type="button"
+            class="mt-2 text-xs text-indigo-400 hover:text-indigo-300 underline">
+            Show the text that will be sent
+          </button>
+          <pre id="previewBox" class="hidden mt-2 max-h-56 overflow-auto whitespace-pre-wrap
+            break-words rounded bg-slate-900 border border-slate-800 p-2.5 text-xs
+            text-slate-300 font-mono"></pre>
         </div>
       </div>
     </section>
@@ -145,10 +155,38 @@
     // =========================================================================
     const TTS_ENDPOINT = "https://us-central1-seismic-ground-500702-e6.cloudfunctions.net/gemini-tts";
 
+    // Gemini's multi-speaker config accepts at most two speakers.
+    const MAX_SPEAKERS = 2;
+
+    // The 30 prebuilt voices.
+    const VOICES = ["Zephyr","Puck","Charon","Kore","Fenrir","Leda","Orus","Aoede",
+      "Callirrhoe","Autonoe","Enceladus","Iapetus","Umbriel","Algieba","Despina",
+      "Erinome","Algenib","Rasalgethi","Laomedeia","Achernar","Alnilam","Schedar",
+      "Gacrux","Pulcherrima","Achird","Zubenelgenubi","Vindemiatrix","Sadachbia",
+      "Sadaltager","Sulafat"];
+
+    // Bracketed cues that are stage directions, not people, even without a colon.
+    const NON_SPEAKER = new Set(["MUSIC","THEME MUSIC","SFX","SOUND","SOUND EFFECT",
+      "PAUSE","BEAT","SILENCE","INTRO","OUTRO","TRANSITION","END","AMBIENCE","STING",
+      "APPLAUSE","LAUGHTER"]);
+
+    const DEFAULT_VOICES = ["Kore", "Puck"];
+
+    // A "### SCRIPT" heading means everything above it is production notes
+    // that should not be read aloud.
+    const SCRIPT_HEADING = /^#{1,6}\s*SCRIPT\s*:?\s*$/i;
+
     const modeSelect = document.getElementById("modeSelect");
     const singleVoiceContainer = document.getElementById("singleVoiceContainer");
     const multiVoiceContainer = document.getElementById("multiVoiceContainer");
+    const speakerRows = document.getElementById("speakerRows");
     const voiceSelect = document.getElementById("voiceSelect");
+    const detectPanel = document.getElementById("detectPanel");
+    const detectIcon = document.getElementById("detectIcon");
+    const detectSummary = document.getElementById("detectSummary");
+    const detectNotes = document.getElementById("detectNotes");
+    const togglePreviewBtn = document.getElementById("togglePreviewBtn");
+    const previewBox = document.getElementById("previewBox");
     const scriptInput = document.getElementById("scriptInput");
     const generateBtn = document.getElementById("generateBtn");
     const loadSampleBtn = document.getElementById("loadSampleBtn");
@@ -166,20 +204,268 @@
 
     let currentAudioBlobUrl = null;
 
-    modeSelect.addEventListener("change", () => {
-      const isSingle = modeSelect.value === "single";
-      singleVoiceContainer.classList.toggle("hidden", !isSingle);
-      multiVoiceContainer.classList.toggle("hidden", isSingle);
+    // Populated by refresh(); this is what the Synthesize button actually sends.
+    let plan = { mode: "single", text: "", speakers: [], voice: "Kore" };
+
+    // Voices you picked by hand, keyed by speaker name. refresh() re-derives
+    // the speaker list on every keystroke, so without this your choice would
+    // be overwritten by the automatic assignment on the next edit.
+    const voiceOverrides = new Map();
+
+    // -----------------------------------------------------------------------
+    // Script analysis
+    //
+    // Gemini requires the speaker names in multiSpeakerVoiceConfig to MATCH the
+    // labels in the script, and the documented label form is "Name: dialogue".
+    // Scripts often arrive as "[NAME][direction] dialogue" instead, so we
+    // normalise rather than merely read.
+    // -----------------------------------------------------------------------
+    function analyzeScript(raw) {
+      const result = {
+        speakers: [], normalized: "", trimmedHeader: false,
+        removedDirections: 0, mode: "single"
+      };
+      if (!raw || !raw.trim()) return result;
+
+      let lines = raw.replace(/\r\n/g, "\n").split("\n");
+
+      const headingAt = lines.findIndex(l => SCRIPT_HEADING.test(l.trim()));
+      if (headingAt !== -1) {
+        lines = lines.slice(headingAt + 1);
+        result.trimmedHeader = true;
+      }
+
+      const out = [];
+      const order = [];
+
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t) { out.push(""); continue; }
+
+        const bracket = t.match(/^\[([^\]]+)\]\s*(.*)$/);
+        if (bracket) {
+          const inner = bracket[1].trim();
+          const rest = bracket[2];
+
+          const looksLikeDirection =
+            inner.includes(":") ||
+            NON_SPEAKER.has(inner.toUpperCase()) ||
+            inner.split(/\s+/).length > 3;
+
+          if (looksLikeDirection) {
+            // A line that is only a stage direction has no speaker, which is
+            // ambiguous in multi-speaker output, so drop it.
+            if (!rest) { result.removedDirections++; continue; }
+            out.push(t);
+            continue;
+          }
+
+          if (!order.includes(inner)) order.push(inner);
+          // Keep any [direction] that followed the name -- Gemini responds to
+          // inline style cues -- but put the name in the "Name:" form.
+          out.push(`${inner}: ${rest}`.trimEnd());
+          continue;
+        }
+
+        const colon = t.match(/^([A-Za-z][A-Za-z0-9 .'\-]{0,30}?)\s*:\s+(.+)$/);
+        if (colon) {
+          const name = colon[1].trim();
+          if (name.split(/\s+/).length <= 3 && !NON_SPEAKER.has(name.toUpperCase())) {
+            if (!order.includes(name)) order.push(name);
+            out.push(t);
+            continue;
+          }
+        }
+
+        out.push(t);
+      }
+
+      result.speakers = order;
+      result.mode = order.length >= 2 ? "multi" : "single";
+
+      let text = out.join("\n");
+
+      // With one speaker there is no speaker config to match against, so a
+      // leading "NARRATOR: " would simply be read aloud. Strip it.
+      if (order.length === 1) {
+        const only = order[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        text = text.replace(new RegExp(`^${only}:\\s*`, "gm"), "");
+      }
+
+      result.normalized = text.replace(/\n{3,}/g, "\n\n").trim();
+      return result;
+    }
+
+    // A speaker literally named after a voice (KORE, FENRIR) takes that voice;
+    // anyone else gets the next unused default.
+    function assignVoices(names) {
+      const byLower = new Map(VOICES.map(v => [v.toLowerCase(), v]));
+      const used = new Set();
+      const out = [];
+
+      for (const n of names) {
+        const exact = byLower.get(n.toLowerCase());
+        if (exact && !used.has(exact)) {
+          used.add(exact);
+          out.push({ speaker: n, voice: exact, matched: true });
+        } else {
+          out.push({ speaker: n, voice: null, matched: false });
+        }
+      }
+      for (const e of out) {
+        if (e.voice) continue;
+        e.voice = DEFAULT_VOICES.find(v => !used.has(v)) || VOICES.find(v => !used.has(v));
+        used.add(e.voice);
+      }
+
+      // A voice you chose by hand wins over the automatic assignment.
+      for (const e of out) {
+        const chosen = voiceOverrides.get(e.speaker);
+        if (chosen && VOICES.includes(chosen)) {
+          e.voice = chosen;
+          e.matched = false;
+        }
+      }
+      return out;
+    }
+
+    // -----------------------------------------------------------------------
+    // UI wiring
+    // -----------------------------------------------------------------------
+    function voiceOptions(selected) {
+      return VOICES.map(v =>
+        `<option value="${v}"${v === selected ? " selected" : ""}>${v}</option>`).join("");
+    }
+    voiceSelect.innerHTML = voiceOptions("Kore");
+
+    function renderSpeakerRows(assigned, editable) {
+      speakerRows.innerHTML = "";
+      assigned.forEach((a, i) => {
+        const row = document.createElement("div");
+        row.className = "flex items-center gap-2 text-xs";
+        row.innerHTML = `
+          <span class="flex-1 min-w-0 truncate bg-slate-950 border border-slate-700
+                rounded-lg px-3 py-2 text-slate-300" title="${a.speaker}">
+            <strong>${a.speaker}</strong>${a.matched ? '<span class="text-emerald-400 ml-1.5">name matches a voice</span>' : ''}
+          </span>
+          <select data-idx="${i}" class="speaker-voice bg-slate-950 border border-slate-700
+                  rounded-lg px-2 py-2 text-slate-200 focus:outline-none focus:ring-2
+                  focus:ring-indigo-500" ${editable ? "" : "disabled"}>
+            ${voiceOptions(a.voice)}
+          </select>`;
+        speakerRows.appendChild(row);
+      });
+
+      speakerRows.querySelectorAll(".speaker-voice").forEach(sel => {
+        sel.addEventListener("change", () => {
+          const i = parseInt(sel.dataset.idx, 10);
+          if (!plan.speakers[i]) return;
+          plan.speakers[i].voice = sel.value;
+          voiceOverrides.set(plan.speakers[i].speaker, sel.value);
+        });
+      });
+    }
+
+    function note(text, tone) {
+      const li = document.createElement("li");
+      li.className = tone === "warn" ? "text-amber-400" : "text-slate-400";
+      li.textContent = (tone === "warn" ? "⚠ " : "• ") + text;
+      detectNotes.appendChild(li);
+    }
+
+    // Recompute everything from the current script + mode. Called on every
+    // edit, so the panel always describes what pressing Generate will do.
+    function refresh() {
+      const raw = scriptInput.value;
+      const chosen = modeSelect.value;
+      const auto = chosen === "auto";
+      const a = analyzeScript(raw);
+
+      detectPanel.classList.toggle("hidden", !auto || !raw.trim());
+      detectNotes.innerHTML = "";
+
+      let mode, text, speakers;
+
+      if (auto) {
+        mode = a.mode;
+        text = a.normalized;
+        speakers = assignVoices(a.speakers.slice(0, MAX_SPEAKERS));
+      } else {
+        // Manual: leave the script untouched, trust the dropdowns.
+        mode = chosen;
+        text = raw.trim();
+        speakers = assignVoices(a.speakers.slice(0, MAX_SPEAKERS));
+      }
+
+      plan = { mode, text, speakers, voice: voiceSelect.value };
+
+      const showSingle = mode === "single";
+      singleVoiceContainer.classList.toggle("hidden", !showSingle);
+      multiVoiceContainer.classList.toggle("hidden", showSingle || speakers.length === 0);
+
+      if (!showSingle && speakers.length) renderSpeakerRows(speakers, true);
+
+      if (!auto || !raw.trim()) return;
+
+      // Describe what was found.
+      if (a.speakers.length === 0) {
+        detectIcon.className = "fa-solid fa-user text-indigo-400 mt-0.5";
+        detectSummary.innerHTML =
+          "<strong>Single speaker.</strong> No speaker labels found, so the whole script is read in one voice.";
+      } else if (a.speakers.length === 1) {
+        detectIcon.className = "fa-solid fa-user text-indigo-400 mt-0.5";
+        detectSummary.innerHTML =
+          `<strong>Single speaker:</strong> ${a.speakers[0]}. The label is removed from the text so it is not read aloud.`;
+      } else {
+        detectIcon.className = "fa-solid fa-users text-indigo-400 mt-0.5";
+        detectSummary.innerHTML =
+          `<strong>Multi-speaker:</strong> ${a.speakers.slice(0, MAX_SPEAKERS).join(" and ")}.`;
+      }
+
+      if (a.trimmedHeader) {
+        note("Notes above the SCRIPT heading were trimmed — they would have been read aloud.");
+      }
+      if (a.removedDirections) {
+        note(a.removedDirections === 1
+          ? "1 stage direction on its own line removed (no speaker attached)."
+          : `${a.removedDirections} stage directions on their own lines removed (no speaker attached).`);
+      }
+      if (a.speakers.length > MAX_SPEAKERS) {
+        note(`Gemini supports at most ${MAX_SPEAKERS} speakers, but ${a.speakers.length} were found (${a.speakers.join(", ")}). Only the first ${MAX_SPEAKERS} are configured; lines by the others will still be read, in whichever voice Gemini picks.`, "warn");
+      }
+      if (speakers.some(s => s.matched)) {
+        note("Speaker names matching a Gemini voice were assigned that voice.");
+      }
+      const chars = text.length;
+      note(`${chars.toLocaleString()} characters will be sent.`);
+      if (chars > 5000) {
+        note("That is over the function's default 5,000-character limit — raise MAX_CHARS on the Cloud Function or split the script.", "warn");
+      }
+
+      previewBox.textContent = text;
+    }
+
+    modeSelect.addEventListener("change", refresh);
+    scriptInput.addEventListener("input", refresh);
+    voiceSelect.addEventListener("change", () => { plan.voice = voiceSelect.value; });
+
+    togglePreviewBtn.addEventListener("click", () => {
+      const hidden = previewBox.classList.toggle("hidden");
+      togglePreviewBtn.textContent = hidden
+        ? "Show the text that will be sent"
+        : "Hide the text that will be sent";
     });
 
     loadSampleBtn.addEventListener("click", () => {
       if (modeSelect.value === "single") {
         scriptInput.value = "[excitedly] Testing audio synthesis through the proxy! Let's hear how it sounds.";
       } else {
-        scriptInput.value = `Dr. Anya: [excitedly] Liam, you won't believe what we found under the mossy log today! A pristine specimen of an arboreal salamander!
-Liam: [laughing] In this dry heat? Are you sure it wasn't just a garden gecko playing tricks on you?
-Dr. Anya: [indignantly] I know my salamanders, Liam!`;
+        // Bracket-label style, so Auto mode has something to detect.
+        scriptInput.value = `[KORE][excitedly] Fenrir, you won't believe what we found under the mossy log today! A pristine specimen of an arboreal salamander!
+[FENRIR][laughing] In this dry heat? Are you sure it wasn't just a garden gecko playing tricks on you?
+[KORE][indignantly] I know my salamanders, Fenrir!`;
       }
+      refresh();
     });
 
     audioPlayer.addEventListener("error", () => {
@@ -235,15 +521,19 @@ Dr. Anya: [indignantly] I know my salamanders, Liam!`;
     }
 
     generateBtn.addEventListener("click", async () => {
-      const text = scriptInput.value.trim();
-      const mode = modeSelect.value;
-      const voice = voiceSelect.value;
+      // `plan` is whatever the detection panel is currently describing, so
+      // what gets sent is always what the page just showed you.
+      refresh();
+      const { mode, text, speakers, voice } = plan;
 
       if (TTS_ENDPOINT.includes("REGION-PROJECT_ID")) {
         return setStatus("error", "TTS_ENDPOINT is not set yet. Paste your deployed Cloud Function URL into this page.");
       }
       if (!text) {
         return setStatus("error", "Please enter a script.");
+      }
+      if (mode === "multi" && speakers.length < 2) {
+        return setStatus("error", "Multi-speaker needs two speaker labels in the script (e.g. \"[KORE] ...\" and \"[FENRIR] ...\"), or switch Mode to Single Speaker.");
       }
 
       generateBtn.disabled = true;
@@ -255,10 +545,17 @@ Dr. Anya: [indignantly] I know my salamanders, Liam!`;
         // function holds the API key and builds the actual Gemini request,
         // then passes Gemini's JSON straight back -- so every line below is
         // the same decoding logic as the original hard-coded-key version.
+        // The speakers array is what lets the function build a
+        // multiSpeakerVoiceConfig whose names match the script's labels.
+        const payload = { text, mode, voice };
+        if (mode === "multi") {
+          payload.speakers = speakers.map(s => ({ speaker: s.speaker, voice: s.voice }));
+        }
+
         const res = await fetch(TTS_ENDPOINT, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, mode, voice })
+          body: JSON.stringify(payload)
         });
 
         if (!res.ok) {
@@ -340,6 +637,9 @@ Dr. Anya: [indignantly] I know my salamanders, Liam!`;
         generateBtn.disabled = false;
       }
     });
+
+    // Initial pass so the controls match an empty script on load.
+    refresh();
   </script>
 </body>
 </html>
