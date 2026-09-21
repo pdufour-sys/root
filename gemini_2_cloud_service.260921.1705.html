@@ -513,29 +513,6 @@
     // so a chunk never begins mid-sentence, and in multi-speaker mode every
     // line still carries its own "Name:" label.
     // -----------------------------------------------------------------------
-    const MAX_RATE_RETRIES = 4;
-
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-    // Gemini reports how long to wait, either as a structured retryDelay in
-    // error.details or as "Please retry in 32.580870129s" inside the message.
-    // Prefer what the server says; fall back to exponential backoff.
-    function retryDelaySeconds(errData, message, attempt) {
-      for (const d of (errData?.error?.details || [])) {
-        const v = d.retryDelay || d.retry_delay;
-        if (typeof v === "string") {
-          const n = parseFloat(v);
-          if (isFinite(n) && n > 0) return Math.min(n + 1, 120);
-        }
-      }
-      const m = /retry in ([\d.]+)\s*s/i.exec(message || "");
-      if (m) {
-        const n = parseFloat(m[1]);
-        if (isFinite(n) && n > 0) return Math.min(n + 1, 120);
-      }
-      return Math.min(5 * Math.pow(2, attempt - 1), 120);
-    }
-
     function splitIntoChunks(text, limit = MAX_CHUNK_CHARS) {
       const lines = text.split("\n");
       const chunks = [];
@@ -689,40 +666,20 @@
             payload.speakers = speakers.map(s => ({ speaker: s.speaker, voice: s.voice }));
           }
 
-          // Rate limits are a normal part of a multi-part run: several requests
-          // land inside one quota window. Gemini says how long to wait, so
-          // honour that and retry rather than discarding the parts already
-          // synthesised.
-          let res, data, attempt = 0;
-          for (;;) {
-            res = await fetch(TTS_ENDPOINT, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload)
-            });
+          const res = await fetch(TTS_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
 
-            if (res.ok) { data = await res.json(); break; }
-
+          if (!res.ok) {
             const errData = await res.json().catch(() => null);
             const detail = errData?.error?.message || `HTTP ${res.status}: ${res.statusText}`;
-            const rateLimited = res.status === 429 || /quota|rate limit/i.test(detail);
-
-            if (rateLimited && attempt < MAX_RATE_RETRIES) {
-              attempt++;
-              const wait = retryDelaySeconds(errData, detail, attempt);
-              for (let left = Math.ceil(wait); left > 0; left--) {
-                setStatus("loading",
-                  `Rate limit reached on part ${i + 1} of ${chunks.length}. ` +
-                  `Waiting ${left}s, then retrying (attempt ${attempt} of ${MAX_RATE_RETRIES})...`);
-                await sleep(1000);
-              }
-              continue;
-            }
-
             throw new Error(chunks.length === 1
               ? detail : `Part ${i + 1} of ${chunks.length} failed: ${detail}`);
           }
 
+          const data = await res.json();
           const part = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
           if (!part?.inlineData?.data) {
             throw new Error(chunks.length === 1

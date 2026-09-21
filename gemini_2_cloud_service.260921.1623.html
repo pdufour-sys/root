@@ -158,18 +158,6 @@
     // Gemini's multi-speaker config accepts at most two speakers.
     const MAX_SPEAKERS = 2;
 
-    // Long scripts must be synthesised in pieces. Two hard ceilings force this,
-    // and raising the timeout alone does not help with the second:
-    //   * the Cloud Function's own timeout (the call has to finish in time)
-    //   * Cloud Run's 32 MB response cap
-    // Gemini returns raw 24 kHz 16-bit mono PCM, so one second of audio is
-    // 48 KB, which becomes 64 KB once base64-encoded. Roughly 13 minutes of
-    // speech would exceed the 32 MB cap on its own.
-    //
-    // ~2000 characters lands near 2.5 minutes of speech: about 9 MB encoded,
-    // comfortably inside both limits with room for slow delivery.
-    const MAX_CHUNK_CHARS = 2000;
-
     // The 30 prebuilt voices.
     const VOICES = ["Zephyr","Puck","Charon","Kore","Fenrir","Leda","Orus","Aoede",
       "Callirrhoe","Autonoe","Enceladus","Iapetus","Umbriel","Algieba","Despina",
@@ -449,12 +437,9 @@
         note("Speaker names matching a Gemini voice were assigned that voice.");
       }
       const chars = text.length;
-      const nChunks = splitIntoChunks(text).length;
-      if (nChunks === 1) {
-        note(`${chars.toLocaleString()} characters, sent in one call.`);
-      } else {
-        const mins = Math.round(chars / 5.5 / 150);
-        note(`${chars.toLocaleString()} characters — sent as ${nChunks} parts and joined into one WAV (roughly ${mins} minutes of audio).`);
+      note(`${chars.toLocaleString()} characters will be sent.`);
+      if (chars > 5000) {
+        note("That is over the function's default 5,000-character limit — raise MAX_CHARS on the Cloud Function or split the script.", "warn");
       }
 
       previewBox.textContent = text;
@@ -506,119 +491,6 @@
       statusAlert.classList.add("hidden");
     }
 
-    // -----------------------------------------------------------------------
-    // Chunking
-    //
-    // Split on line boundaries, because every line is one speaker's turn --
-    // so a chunk never begins mid-sentence, and in multi-speaker mode every
-    // line still carries its own "Name:" label.
-    // -----------------------------------------------------------------------
-    const MAX_RATE_RETRIES = 4;
-
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-    // Gemini reports how long to wait, either as a structured retryDelay in
-    // error.details or as "Please retry in 32.580870129s" inside the message.
-    // Prefer what the server says; fall back to exponential backoff.
-    function retryDelaySeconds(errData, message, attempt) {
-      for (const d of (errData?.error?.details || [])) {
-        const v = d.retryDelay || d.retry_delay;
-        if (typeof v === "string") {
-          const n = parseFloat(v);
-          if (isFinite(n) && n > 0) return Math.min(n + 1, 120);
-        }
-      }
-      const m = /retry in ([\d.]+)\s*s/i.exec(message || "");
-      if (m) {
-        const n = parseFloat(m[1]);
-        if (isFinite(n) && n > 0) return Math.min(n + 1, 120);
-      }
-      return Math.min(5 * Math.pow(2, attempt - 1), 120);
-    }
-
-    function splitIntoChunks(text, limit = MAX_CHUNK_CHARS) {
-      const lines = text.split("\n");
-      const chunks = [];
-      let cur = "";
-
-      const push = () => { if (cur.trim()) chunks.push(cur.trim()); cur = ""; };
-
-      for (const line of lines) {
-        // A single line longer than the limit (a long monologue) is split at
-        // sentence ends so we never cut mid-word.
-        if (line.length > limit) {
-          push();
-          const sentences = line.match(/[^.!?]+[.!?]+[\s]*|[^.!?]+$/g) || [line];
-          let piece = "";
-          for (const s of sentences) {
-            if ((piece + s).length > limit && piece) { chunks.push(piece.trim()); piece = ""; }
-            piece += s;
-          }
-          if (piece.trim()) chunks.push(piece.trim());
-          continue;
-        }
-
-        if ((cur + "\n" + line).length > limit && cur) push();
-        cur = cur ? cur + "\n" + line : line;
-      }
-      push();
-      return chunks.length ? chunks : [text];
-    }
-
-    // Decode base64 to bytes.
-    function b64ToBytes(b64) {
-      const bin = atob(b64);
-      const out = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-      return out;
-    }
-
-    // Return the raw PCM samples from one chunk's response, whatever wrapper
-    // it arrived in. Concatenating PCM is trivial; concatenating MP3 or Ogg
-    // frames is not, so those are refused rather than silently corrupted.
-    function pcmFromChunk(bytes, mime) {
-      const isWav = bytes[0] === 0x52 && bytes[1] === 0x49 &&
-                    bytes[2] === 0x46 && bytes[3] === 0x46;
-      if (isWav) {
-        // Walk the RIFF chunks to find "data" rather than assuming a
-        // 44-byte header, which is only true for the simplest WAV files.
-        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        let off = 12, rate = 24000;
-        while (off + 8 <= bytes.length) {
-          const id = String.fromCharCode(bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]);
-          const size = view.getUint32(off + 4, true);
-          if (id === "fmt ") rate = view.getUint32(off + 12, true);
-          if (id === "data") {
-            return { pcm: bytes.subarray(off + 8, off + 8 + size), rate };
-          }
-          off += 8 + size + (size % 2);
-        }
-        return { pcm: bytes.subarray(44), rate };
-      }
-
-      const isMp3 = (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) ||
-                    (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0);
-      const isOgg = bytes[0] === 0x4F && bytes[1] === 0x67 &&
-                    bytes[2] === 0x67 && bytes[3] === 0x53;
-      if (isMp3 || isOgg) {
-        throw new Error(
-          `Chunked synthesis needs raw PCM or WAV, but this chunk came back as ` +
-          `${isMp3 ? "MP3" : "Ogg"}. Shorten the script so it fits in one call.`);
-      }
-
-      // Raw PCM: the sample rate is only in the MIME type.
-      const m = (mime || "").match(/rate=(\d+)/i);
-      return { pcm: bytes, rate: m ? parseInt(m[1], 10) : 24000 };
-    }
-
-    function concatPcm(parts) {
-      const total = parts.reduce((n, p) => n + p.length, 0);
-      const out = new Uint8Array(total);
-      let at = 0;
-      for (const p of parts) { out.set(p, at); at += p.length; }
-      return out;
-    }
-
     function buildWavFromPcm(pcmBytes, sampleRate = 24000, numChannels = 1, bitDepth = 16) {
       const byteRate = (sampleRate * numChannels * bitDepth) / 8;
       const blockAlign = (numChannels * bitDepth) / 8;
@@ -665,107 +537,85 @@
       }
 
       generateBtn.disabled = true;
+      setStatus("loading", "Calling speech service...");
       resultSection.classList.add("hidden");
 
-      // Long scripts are synthesised in pieces and stitched back together.
-      // A single short script yields exactly one chunk, so this path is the
-      // same as before for everyday use.
-      const chunks = splitIntoChunks(text);
-
       try {
-        const pcmParts = [];
-        let rate = null, lastMime = "", totalBytes = 0, firstHex = "";
-
-        for (let i = 0; i < chunks.length; i++) {
-          setStatus("loading", chunks.length === 1
-            ? "Calling speech service..."
-            : `Synthesizing part ${i + 1} of ${chunks.length}...`);
-
-          // The speakers array lets the function build a multiSpeakerVoiceConfig
-          // whose names match the script's labels. Every chunk carries the same
-          // config, so voices stay consistent across the whole recording.
-          const payload = { text: chunks[i], mode, voice };
-          if (mode === "multi") {
-            payload.speakers = speakers.map(s => ({ speaker: s.speaker, voice: s.voice }));
-          }
-
-          // Rate limits are a normal part of a multi-part run: several requests
-          // land inside one quota window. Gemini says how long to wait, so
-          // honour that and retry rather than discarding the parts already
-          // synthesised.
-          let res, data, attempt = 0;
-          for (;;) {
-            res = await fetch(TTS_ENDPOINT, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload)
-            });
-
-            if (res.ok) { data = await res.json(); break; }
-
-            const errData = await res.json().catch(() => null);
-            const detail = errData?.error?.message || `HTTP ${res.status}: ${res.statusText}`;
-            const rateLimited = res.status === 429 || /quota|rate limit/i.test(detail);
-
-            if (rateLimited && attempt < MAX_RATE_RETRIES) {
-              attempt++;
-              const wait = retryDelaySeconds(errData, detail, attempt);
-              for (let left = Math.ceil(wait); left > 0; left--) {
-                setStatus("loading",
-                  `Rate limit reached on part ${i + 1} of ${chunks.length}. ` +
-                  `Waiting ${left}s, then retrying (attempt ${attempt} of ${MAX_RATE_RETRIES})...`);
-                await sleep(1000);
-              }
-              continue;
-            }
-
-            throw new Error(chunks.length === 1
-              ? detail : `Part ${i + 1} of ${chunks.length} failed: ${detail}`);
-          }
-
-          const part = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-          if (!part?.inlineData?.data) {
-            throw new Error(chunks.length === 1
-              ? "No audio inlineData was returned by the model."
-              : `Part ${i + 1} returned no audio.`);
-          }
-
-          lastMime = part.inlineData.mimeType || "";
-          const bytes = b64ToBytes(part.inlineData.data);
-          totalBytes += bytes.length;
-
-          if (!firstHex) {
-            firstHex = Array.from(bytes.slice(0, 8))
-              .map(b => "0x" + b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
-          }
-
-          const got = pcmFromChunk(bytes, lastMime);
-
-          // Parts at different sample rates cannot simply be concatenated --
-          // everything after the mismatch would play at the wrong speed.
-          if (rate === null) rate = got.rate;
-          else if (got.rate !== rate) {
-            throw new Error(`Part ${i + 1} came back at ${got.rate} Hz but earlier ` +
-              `parts were ${rate} Hz, so they cannot be joined.`);
-          }
-
-          pcmParts.push(got.pcm);
+        // We POST only the three plain inputs to OUR Cloud Function.  The
+        // function holds the API key and builds the actual Gemini request,
+        // then passes Gemini's JSON straight back -- so every line below is
+        // the same decoding logic as the original hard-coded-key version.
+        // The speakers array is what lets the function build a
+        // multiSpeakerVoiceConfig whose names match the script's labels.
+        const payload = { text, mode, voice };
+        if (mode === "multi") {
+          payload.speakers = speakers.map(s => ({ speaker: s.speaker, voice: s.voice }));
         }
 
-        const joined = concatPcm(pcmParts);
-        const seconds = joined.length / (rate * 2);
-        const mmss = `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
+        const res = await fetch(TTS_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-        debugMime.textContent = lastMime || "(unspecified by API)";
-        debugSize.textContent = `${totalBytes.toLocaleString()} bytes received -> ` +
-          `${joined.length.toLocaleString()} bytes PCM (~${mmss})`;
-        debugHex.textContent = firstHex;
-        detectedFormatBadge.textContent = chunks.length === 1
-          ? "Format: Raw PCM (Packaged to WAV)"
-          : `Format: ${chunks.length} parts joined -> WAV`;
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.error?.message || `HTTP ${res.status}: ${res.statusText}`);
+        }
 
-        const finalBlob = buildWavFromPcm(joined, rate, 1, 16);
-        const fileExt = "wav";
+        const data = await res.json();
+        const part = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+
+        if (!part?.inlineData?.data) {
+          throw new Error("No audio inlineData was returned by the model.");
+        }
+
+        const rawMime = part.inlineData.mimeType || "";
+        const base64Str = part.inlineData.data;
+
+        // Base64 decode
+        const binaryStr = window.atob(base64Str);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+
+        const b0 = bytes[0], b1 = bytes[1], b2 = bytes[2], b3 = bytes[3];
+        const hexDump = Array.from(bytes.slice(0, 8))
+          .map(b => "0x" + b.toString(16).padStart(2, '0').toUpperCase())
+          .join(" ");
+
+        debugMime.textContent = rawMime || "(unspecified by API)";
+        debugSize.textContent = `${bytes.length.toLocaleString()} bytes`;
+        debugHex.textContent = hexDump;
+
+        let finalBlob;
+        let fileExt = "wav";
+
+        const isWavHeader = (b0 === 0x52 && b1 === 0x49 && b2 === 0x46 && b3 === 0x46);
+        const isMp3Header = (b0 === 0x49 && b1 === 0x44 && b2 === 0x33) || (b0 === 0xFF && (b1 & 0xE0) === 0xE0);
+        const isOggHeader = (b0 === 0x4F && b1 === 0x67 && b2 === 0x67 && b3 === 0x53);
+
+        if (isWavHeader) {
+          detectedFormatBadge.textContent = "Format: Complete WAV (Direct)";
+          finalBlob = new Blob([bytes], { type: "audio/wav" });
+          fileExt = "wav";
+        } else if (isMp3Header) {
+          detectedFormatBadge.textContent = "Format: MP3 Stream";
+          finalBlob = new Blob([bytes], { type: "audio/mpeg" });
+          fileExt = "mp3";
+        } else if (isOggHeader) {
+          detectedFormatBadge.textContent = "Format: Ogg Container";
+          finalBlob = new Blob([bytes], { type: "audio/ogg" });
+          fileExt = "ogg";
+        } else {
+          detectedFormatBadge.textContent = "Format: Raw PCM (Packaged to WAV)";
+          let rate = 24000;
+          const match = rawMime.match(/rate=(\d+)/i);
+          if (match) rate = parseInt(match[1], 10);
+          finalBlob = buildWavFromPcm(bytes, rate, 1, 16);
+          fileExt = "wav";
+        }
 
         if (currentAudioBlobUrl) URL.revokeObjectURL(currentAudioBlobUrl);
         currentAudioBlobUrl = URL.createObjectURL(finalBlob);
