@@ -170,12 +170,6 @@
     // comfortably inside both limits with room for slow delivery.
     const MAX_CHUNK_CHARS = 2000;
 
-    // Every recording opens with this much silence, so playback does not start
-    // mid-syllable and there is room to fade in music over it. Set to 0 to
-    // disable. This is added locally after synthesis -- it costs nothing in
-    // API calls, and Gemini is not asked to "pause", which it would ignore.
-    const LEAD_SILENCE_SECONDS = 2;
-
     // The 30 prebuilt voices.
     const VOICES = ["Zephyr","Puck","Charon","Kore","Fenrir","Leda","Orus","Aoede",
       "Callirrhoe","Autonoe","Enceladus","Iapetus","Umbriel","Algieba","Despina",
@@ -625,16 +619,6 @@
       return out;
     }
 
-    // A block of digital silence, sized to the actual sample rate of what came
-    // back. For signed 16-bit PCM, amplitude zero IS silence, and a fresh
-    // Uint8Array is already zero-filled -- so there is nothing to write.
-    // Rounding to a whole sample keeps the byte count even; an odd count would
-    // shift every following sample by one byte and turn the speech into noise.
-    function silencePcm(seconds, rate, bytesPerSample = 2) {
-      const samples = Math.max(0, Math.round(seconds * rate));
-      return new Uint8Array(samples * bytesPerSample);
-    }
-
     function buildWavFromPcm(pcmBytes, sampleRate = 24000, numChannels = 1, bitDepth = 16) {
       const byteRate = (sampleRate * numChannels * bitDepth) / 8;
       const blockAlign = (numChannels * bitDepth) / 8;
@@ -768,20 +752,13 @@
           pcmParts.push(got.pcm);
         }
 
-        // Lead-in silence goes on the front of the joined speech, at the same
-        // sample rate, so it is part of the single WAV rather than a separate
-        // file to splice later.
-        const speech = concatPcm(pcmParts);
-        const lead = silencePcm(LEAD_SILENCE_SECONDS, rate);
-        const joined = lead.length ? concatPcm([lead, speech]) : speech;
-
+        const joined = concatPcm(pcmParts);
         const seconds = joined.length / (rate * 2);
         const mmss = `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}`;
 
         debugMime.textContent = lastMime || "(unspecified by API)";
         debugSize.textContent = `${totalBytes.toLocaleString()} bytes received -> ` +
-          `${joined.length.toLocaleString()} bytes PCM (~${mmss})` +
-          (lead.length ? `, including ${LEAD_SILENCE_SECONDS}s lead-in silence` : "");
+          `${joined.length.toLocaleString()} bytes PCM (~${mmss})`;
         debugHex.textContent = firstHex;
         detectedFormatBadge.textContent = chunks.length === 1
           ? "Format: Raw PCM (Packaged to WAV)"
